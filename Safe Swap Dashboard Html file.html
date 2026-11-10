@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safe Swap – Delivery vs Payment</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<style>
+  :root{--bg:#f4f6fb;--card:#fff;--ink:#1d2433;--muted:#6b7385;--brand:#4f46e5;--brand2:#4338ca;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--line:#e3e7f0}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45}
+  header{background:linear-gradient(120deg,#4f46e5,#7c3aed);color:#fff;padding:18px 20px}
+  .wrap{max-width:900px;margin:0 auto}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  h1{font-size:22px;margin:0}
+  .sub{opacity:.9;font-size:14px;margin-top:2px}
+  .walletbox{text-align:right;font-size:13px}
+  button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:10px 16px;font-weight:600;background:var(--brand);color:#fff}
+  button:hover{background:var(--brand2)}
+  button:disabled{opacity:.6;cursor:wait}
+  button.light{background:#fff;color:var(--brand)}
+  button.ghost{background:#eef0fb;color:var(--brand)}
+  button.small{padding:6px 10px;font-size:13px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 14px}
+  .tabs button{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .tabs button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  main{padding:0 16px 40px}
+  .how{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+  .how div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px}
+  .how b{display:block;color:var(--brand)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .card h2{margin:0 0 4px;font-size:18px}
+  .hint{color:var(--muted);font-size:14px;margin:0 0 12px}
+  label{display:block;font-size:13px;font-weight:600;margin:10px 0 4px}
+  input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font:inherit;background:#fff}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .badge{display:inline-block;background:#eef0fb;color:var(--brand);border-radius:99px;padding:2px 10px;font-size:12px;font-weight:700}
+  .tab{display:none}.tab.on{display:block}
+  .box{background:#f7f8fd;border:1px dashed #c7ccf0;border-radius:10px;padding:10px;margin-top:12px;font-size:14px;word-break:break-all}
+  .toast{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:20px;max-width:92%;width:560px;padding:14px 16px;border-radius:12px;color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.25);z-index:9;word-break:break-word}
+  .toast.ok{background:var(--ok)}.toast.err{background:var(--err)}.toast.info{background:#334155}
+  .toast a{color:#fff;text-decoration:underline}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .side{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fbfcff}
+  .side h3{margin:0 0 6px;font-size:15px}
+  .st{font-weight:700}
+  .steps{list-style:none;padding:0;margin:12px 0}
+  .steps li{padding:6px 0;font-size:15px}
+  .banner{border-radius:10px;padding:12px;font-weight:600;margin-top:8px}
+  .banner.good{background:#dcfce7;color:#166534}.banner.wait{background:#fef3c7;color:#92400e}.banner.bad{background:#fee2e2;color:#991b1b}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  .list button{margin:3px 6px 3px 0}
+  @media(max-width:640px){.row,.two,.how{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="wrap top">
+  <div><h1>🔄 Safe Swap</h1><div class="sub">Delivery vs Payment across two blockchains – both happen, or neither.</div></div>
+  <div class="walletbox">
+    <button id="btnConnect" class="light">Connect MetaMask</button>
+    <div id="walletInfo" style="margin-top:6px"></div>
+  </div>
+</div></header>
+
+<main><div class="wrap">
+
+<div class="how">
+  <div><b>1. Seller locks asset</b>on Network A</div>
+  <div><b>2. Buyer locks payment</b>on Network B</div>
+  <div><b>3. Seller collects payment</b>this reveals a secret</div>
+  <div><b>4. Buyer collects asset</b>using the same secret</div>
+</div>
+
+<div class="tabs">
+  <button data-tab="setup" class="on">⚙️ Setup</button>
+  <button data-tab="seller">🏷️ I'm the Seller</button>
+  <button data-tab="buyer">💰 I'm the Buyer</button>
+  <button data-tab="track">🔍 Track a Trade</button>
+  <button data-tab="tokens">🪙 Test Tokens</button>
+</div>
+
+<!-- SETUP -->
+<section id="tab-setup" class="tab on">
+  <div class="card">
+    <h2>One-time setup</h2>
+    <p class="hint">Deploy the contracts from Remix on two different test networks, then paste their addresses here. They are saved in your browser.</p>
+    <div class="two">
+      <div class="side">
+        <h3>🅰️ Network A – where the ASSET lives</h3>
+        <label>Network</label><select id="chainA"></select>
+        <label>Settlement contract address</label><input id="settleA" placeholder="0x…">
+        <label>Asset token address</label><input id="tokenA" placeholder="0x…">
+      </div>
+      <div class="side">
+        <h3>🅱️ Network B – where the PAYMENT lives</h3>
+        <label>Network</label><select id="chainB"></select>
+        <label>Settlement contract address</label><input id="settleB" placeholder="0x…">
+        <label>Payment token address</label><input id="tokenB" placeholder="0x…">
+      </div>
+    </div>
+    <div style="margin-top:14px"><button id="btnSave">Save setup</button></div>
+  </div>
+</section>
+
+<!-- SELLER -->
+<section id="tab-seller" class="tab">
+  <div class="card">
+    <h2>Step 1 – Lock your asset <span class="badge netA">Network A</span></h2>
+    <p class="hint">Your asset is held safely by the contract. A secret code is created for you automatically and kept in this browser.</p>
+    <label>Buyer's wallet address</label><input id="sBuyer" placeholder="0x…">
+    <div class="row">
+      <div><label>Asset amount</label><input id="sAmount" type="number" min="0" step="any" placeholder="e.g. 100"></div>
+      <div><label>Deadline (minutes)</label><input id="sMins" type="number" min="2" value="120"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btnSLock">Lock asset</button></div>
+    <div id="sResult"></div>
+  </div>
+  <div class="card">
+    <h2>Step 2 – Collect your payment <span class="badge netB">Network B</span></h2>
+    <p class="hint">Do this after the buyer has locked the payment. It uses your secret code, which lets the buyer collect the asset.</p>
+    <label>Trade ID</label><input class="hashInput mono" placeholder="0x…">
+    <label>Secret code <span style="font-weight:400;color:var(--muted)">(leave empty – it is found automatically)</span></label>
+    <input id="sSecret" class="mono" placeholder="optional">
+    <div style="margin-top:14px"><button id="btnSClaim">Collect payment</button></div>
+  </div>
+</section>
+
+<!-- BUYER -->
+<section id="tab-buyer" class="tab">
+  <div class="card">
+    <h2>Step 1 – Lock your payment <span class="badge netB">Network B</span></h2>
+    <p class="hint">Paste the Trade ID the seller sent you. Your deadline must be shorter than the seller's, so you are always protected.</p>
+    <label>Trade ID (from the seller)</label><input class="hashInput mono" placeholder="0x…">
+    <div style="margin-top:8px"><button id="btnOffer" class="ghost small">Check the seller's offer</button></div>
+    <div id="offerBox"></div>
+    <label>Seller's wallet address</label><input id="bSeller" placeholder="0x… (filled in when you check the offer)">
+    <div class="row">
+      <div><label>Payment amount</label><input id="bAmount" type="number" min="0" step="any" placeholder="e.g. 5000"></div>
+      <div><label>Deadline (minutes)</label><input id="bMins" type="number" min="2" value="60"></div>
+    </div>
+    <div style="margin-top:14px"><button id="btnBLock">Lock payment</button></div>
+  </div>
+  <div class="card">
+    <h2>Step 2 – Receive your asset <span class="badge netA">Network A</span></h2>
+    <p class="hint">Once the seller collects the payment, the secret becomes public and this button works.</p>
+    <label>Trade ID</label><input class="hashInput mono" placeholder="0x…">
+    <div style="margin-top:14px"><button id="btnBClaim">Receive asset</button></div>
+  </div>
+</section>
+
+<!-- TRACK -->
+<section id="tab-track" class="tab">
+  <div class="card">
+    <h2>Track a trade</h2>
+    <p class="hint">See what is happening on both networks. No wallet switching needed.</p>
+    <label>Trade ID</label><input class="hashInput mono" placeholder="0x…">
+    <div style="margin-top:12px"><button id="btnTrack">Check status</button> <button id="btnMine" class="ghost">Show my trades</button></div>
+    <div id="mine" class="list"></div>
+    <div id="trackOut"></div>
+  </div>
+</section>
+
+<!-- TOKENS -->
+<section id="tab-tokens" class="tab">
+  <div class="card">
+    <h2>Get free test tokens</h2>
+    <p class="hint">Practice tokens, no real value. Mint some so you can try a trade.</p>
+    <div class="two">
+      <div class="side"><h3>Asset token <span class="badge netA">Network A</span></h3>
+        <div id="balA">Balance: –</div><div style="margin-top:10px"><button id="btnMintA">Get 1,000 asset tokens</button></div></div>
+      <div class="side"><h3>Payment token <span class="badge netB">Network B</span></h3>
+        <div id="balB">Balance: –</div><div style="margin-top:10px"><button id="btnMintB">Get 1,000 payment tokens</button></div></div>
+    </div>
+    <div style="margin-top:12px"><button id="btnBal" class="ghost small">Refresh balances</button></div>
+  </div>
+</section>
+
+</div></main>
+<div id="toast" class="toast" onclick="this.style.display='none'"></div>
+
+<script>
+/* ---------- Networks you can choose from ---------- */
+const PRESETS = {
+  11155111:{id:11155111,name:"Sepolia",rpc:"https://ethereum-sepolia-rpc.publicnode.com",explorer:"https://sepolia.etherscan.io",symbol:"ETH"},
+  84532:{id:84532,name:"Base Sepolia",rpc:"https://sepolia.base.org",explorer:"https://sepolia.basescan.org",symbol:"ETH"},
+  421614:{id:421614,name:"Arbitrum Sepolia",rpc:"https://sepolia-rollup.arbitrum.io/rpc",explorer:"https://sepolia.arbiscan.io",symbol:"ETH"},
+  11155420:{id:11155420,name:"OP Sepolia",rpc:"https://sepolia.optimism.io",explorer:"https://sepolia-optimism.etherscan.io",symbol:"ETH"},
+  80002:{id:80002,name:"Polygon Amoy",rpc:"https://rpc-amoy.polygon.technology",explorer:"https://amoy.polygonscan.com",symbol:"POL"}
+};
+const SETTLE_ABI = [
+  "function lock(bytes32 tradeId,address receiver,address token,uint256 amount,uint256 durationSeconds)",
+  "function claim(bytes32 tradeId,bytes32 secret)",
+  "function refund(bytes32 tradeId)",
+  "function swaps(bytes32) view returns (address sender,address receiver,address token,uint256 amount,uint256 expiry,uint8 status,bytes32 secret)",
+  "function getUserSwaps(address) view returns (bytes32[])"
+];
+const TOKEN_ABI = [
+  "function approve(address,uint256) returns (bool)",
+  "function allowance(address,address) view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function mint(uint256)",
+  "function symbol() view returns (string)"
+];
+const STATUS = ["Not started","Locked","Completed","Refunded"];
+
+/* ---------- Small helpers ---------- */
+const $ = id => document.getElementById(id);
+const short = a => a ? a.slice(0,6)+"…"+a.slice(-4) : "";
+let account = null;
+let currentHash = localStorage.getItem("dvp-hash") || "";
+let cfg = JSON.parse(localStorage.getItem("dvp-cfg") || "null") ||
+  {A:{chain:11155111,settle:"",token:""},B:{chain:84532,settle:"",token:""}};
+const secrets = () => JSON.parse(localStorage.getItem("dvp-secrets") || "{}");
+const saveSecret = (h,s) => { const x = secrets(); x[h] = s; localStorage.setItem("dvp-secrets", JSON.stringify(x)); };
+const P = side => PRESETS[cfg[side].chain];
+const symCache = {};
+
+function toast(html,type="ok"){
+  const t = $("toast"); t.className = "toast "+type; t.innerHTML = html; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(()=>t.style.display="none", 12000);
+}
+function friendly(e){
+  if (e.code === "ACTION_REJECTED" || e.code === 4001) return "You cancelled the request in MetaMask.";
+  return e.shortMessage || e.reason || e.message || String(e);
+}
+async function run(btn, fn){
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Working… check MetaMask";
+  try { await fn(); } catch(e){ console.error(e); toast("❌ "+friendly(e),"err"); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+function need(side){
+  const c = cfg[side];
+  if (!ethers.isAddress(c.settle) || !ethers.isAddress(c.token)) throw new Error("Please finish the Setup tab first.");
+  return c;
+}
+const getHash = () => {
+  const h = currentHash.trim();
+  if (!/^0x[0-9a-fA-F]{64}$/.test(h)) throw new Error("Please enter a valid Trade ID (it starts with 0x and is 66 characters long).");
+  return h;
+};
+function setHash(v, except){
+  currentHash = v; localStorage.setItem("dvp-hash", v);
+  document.querySelectorAll(".hashInput").forEach(i => { if (i !== except) i.value = v; });
+}
+const fmt = n => ethers.formatUnits(n,18);
+const readProv = side => { const net = ethers.Network.from(P(side).id); return new ethers.JsonRpcProvider(P(side).rpc, net, {staticNetwork:net}); };
+const settleC = (side, runner) => new ethers.Contract(cfg[side].settle, SETTLE_ABI, runner);
+async function tokenSym(side){
+  const k = side+cfg[side].token;
+  if (!symCache[k]) { try { symCache[k] = await new ethers.Contract(cfg[side].token, TOKEN_ABI, readProv(side)).symbol(); } catch { symCache[k] = "tokens"; } }
+  return symCache[k];
+}
+async function getSwap(side, h){
+  const s = await settleC(side, readProv(side)).swaps(h);
+  return {sender:s[0],receiver:s[1],token:s[2],amount:s[3],expiry:Number(s[4]),status:Number(s[5]),secret:s[6]};
+}
+
+/* ---------- Wallet ---------- */
+async function ensureChain(p){
+  const hex = "0x"+p.id.toString(16);
+  const cur = await window.ethereum.request({method:"eth_chainId"});
+  if (cur.toLowerCase() === hex) return;
+  try {
+    await window.ethereum.request({method:"wallet_switchEthereumChain", params:[{chainId:hex}]});
+  } catch(e){
+    if (e.code === 4902 || (e.data && e.data.originalError && e.data.originalError.code === 4902)) {
+      await window.ethereum.request({method:"wallet_addEthereumChain", params:[{chainId:hex,chainName:p.name,
+        nativeCurrency:{name:p.symbol,symbol:p.symbol,decimals:18},rpcUrls:[p.rpc],blockExplorerUrls:[p.explorer]}]});
+    } else throw e;
+  }
+}
+async function signerFor(side){
+  if (!window.ethereum) throw new Error("MetaMask not found. Please install the MetaMask extension.");
+  await window.ethereum.request({method:"eth_requestAccounts"});
+  await ensureChain(P(side));
+  const s = await new ethers.BrowserProvider(window.ethereum).getSigner();
+  account = await s.getAddress(); updateWallet();
+  return s;
+}
+async function updateWallet(){
+  if (!account) { $("walletInfo").textContent = ""; $("btnConnect").textContent = "Connect MetaMask"; return; }
+  let net = "";
+  try { const id = parseInt(await window.ethereum.request({method:"eth_chainId"}),16); net = PRESETS[id] ? PRESETS[id].name : "Network "+id; } catch {}
+  $("btnConnect").textContent = "✓ Connected";
+  $("walletInfo").innerHTML = short(account)+" · "+net;
+}
+$("btnConnect").onclick = e => run(e.target, async()=>{
+  if (!window.ethereum) throw new Error("MetaMask not found. Please install the MetaMask extension.");
+  const a = await window.ethereum.request({method:"eth_requestAccounts"});
+  account = ethers.getAddress(a[0]); updateWallet(); toast("✅ Wallet connected.");
+});
+if (window.ethereum){
+  window.ethereum.on("accountsChanged", a => { account = a[0] ? ethers.getAddress(a[0]) : null; updateWallet(); });
+  window.ethereum.on("chainChanged", updateWallet);
+  window.ethereum.request({method:"eth_accounts"}).then(a => { if (a[0]) { account = ethers.getAddress(a[0]); updateWallet(); } }).catch(()=>{});
+}
+
+/* ---------- Transactions ---------- */
+async function sendTx(side, txPromise, msg){
+  const tx = await txPromise;
+  toast("⏳ Waiting for confirmation…","info");
+  await tx.wait();
+  toast("✅ "+msg+' <a target="_blank" href="'+P(side).explorer+"/tx/"+tx.hash+'">View transaction</a>');
+}
+async function approveIfNeeded(side, signer, amount){
+  const tk = new ethers.Contract(cfg[side].token, TOKEN_ABI, signer);
+  const al = await tk.allowance(account, cfg[side].settle);
+  if (al < amount){
+    toast("Part 1 of 2: giving the contract permission to hold your tokens. Confirm in MetaMask.","info");
+    const t = await tk.approve(cfg[side].settle, amount); await t.wait();
+    toast("Part 2 of 2: locking your tokens. Confirm in MetaMask.","info");
+  }
+}
+
+/* ---------- Tabs & setup ---------- */
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(name){
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-"+name));
+  if (name === "tokens") refreshBalances();
+}
+function fillNetworks(){
+  ["chainA","chainB"].forEach(id => {
+    $(id).innerHTML = Object.values(PRESETS).map(p => '<option value="'+p.id+'">'+p.name+"</option>").join("");
+  });
+  $("chainA").value = cfg.A.chain; $("chainB").value = cfg.B.chain;
+  $("settleA").value = cfg.A.settle; $("tokenA").value = cfg.A.token;
+  $("settleB").value = cfg.B.settle; $("tokenB").value = cfg.B.token;
+  labelNets();
+}
+function labelNets(){
+  document.querySelectorAll(".netA").forEach(e => e.textContent = "Network A · "+P("A").name);
+  document.querySelectorAll(".netB").forEach(e => e.textContent = "Network B · "+P("B").name);
+}
+$("btnSave").onclick = () => {
+  try {
+    const n = {A:{chain:+$("chainA").value,settle:$("settleA").value.trim(),token:$("tokenA").value.trim()},
+               B:{chain:+$("chainB").value,settle:$("settleB").value.trim(),token:$("tokenB").value.trim()}};
+    if (n.A.chain === n.B.chain) throw new Error("Pick two DIFFERENT networks for A and B.");
+    for (const s of ["A","B"]) for (const k of ["settle","token"])
+      if (!ethers.isAddress(n[s][k])) throw new Error("Network "+s+": please paste a valid "+(k==="settle"?"settlement contract":"token")+" address.");
+    cfg = n; localStorage.setItem("dvp-cfg", JSON.stringify(cfg)); labelNets();
+    toast("✅ Setup saved. You can now use the Seller and Buyer tabs.");
+  } catch(e){ toast("❌ "+e.message,"err"); }
+};
+document.querySelectorAll(".hashInput").forEach(i => i.addEventListener("input", () => setHash(i.value.trim(), i)));
+
+/* ---------- SELLER ---------- */
+$("btnSLock").onclick = e => run(e.target, async()=>{
+  need("A");
+  const buyer = $("sBuyer").value.trim(), amt = $("sAmount").value, mins = Number($("sMins").value);
+  if (!ethers.isAddress(buyer)) throw new Error("Enter a valid buyer wallet address.");
+  if (!(Number(amt) > 0)) throw new Error("Enter an asset amount above 0.");
+  if (!(mins >= 2)) throw new Error("Deadline must be at least 2 minutes.");
+  const amount = ethers.parseUnits(amt,18);
+  const secret = ethers.hexlify(ethers.randomBytes(32));
+  const hash = ethers.sha256(secret);
+  saveSecret(hash, secret);                       // saved BEFORE sending, so it can never be lost
+  const s = await signerFor("A");
+  await approveIfNeeded("A", s, amount);
+  await sendTx("A", settleC("A", s).lock(hash, buyer, cfg.A.token, amount, Math.round(mins*60)), "Asset locked.");
+  setHash(hash);
+  $("sResult").innerHTML = '<div class="box"><b>Send this Trade ID to the buyer:</b><br><span class="mono" id="tid">'+hash+
+    '</span><br><button class="small ghost" style="margin-top:8px" onclick="navigator.clipboard.writeText(\''+hash+'\');toast(\'Copied!\')">Copy Trade ID</button>'+
+    '<br><small>Your secret code is saved in this browser. Do not clear your browser data until the trade is finished.</small></div>';
+});
+$("btnSClaim").onclick = e => run(e.target, async()=>{
+  need("B"); const h = getHash();
+  const secret = $("sSecret").value.trim() || secrets()[h];
+  if (!secret) throw new Error("Secret code not found in this browser. Use the same browser where you locked the asset, or paste it above.");
+  if (ethers.sha256(secret) !== h.toLowerCase()) throw new Error("This secret code does not match the Trade ID.");
+  const o = await getSwap("B", h);
+  if (o.status === 0) throw new Error("The buyer has not locked the payment yet. Try again later.");
+  if (o.status !== 1) throw new Error("This payment is already "+STATUS[o.status].toLowerCase()+".");
+  const s = await signerFor("B");
+  await sendTx("B", settleC("B", s).claim(h, secret), "Payment received! The buyer can now collect the asset.");
+});
+
+/* ---------- BUYER ---------- */
+async function loadOffer(){
+  need("A"); const h = getHash();
+  const o = await getSwap("A", h);
+  if (o.status === 0) throw new Error("No asset has been locked for this Trade ID yet.");
+  const sym = await tokenSym("A");
+  $("bSeller").value = o.sender;
+  const left = o.expiry - Math.floor(Date.now()/1000);
+  const mine = account && account.toLowerCase() === o.receiver.toLowerCase();
+  $("offerBox").innerHTML = '<div class="box">Seller <b>'+short(o.sender)+"</b> is offering <b>"+fmt(o.amount)+" "+sym+"</b> to <b>"+short(o.receiver)+"</b>"+
+    (mine ? " (that's you ✓)" : (account ? ' <span style="color:var(--err)">– this is NOT your connected wallet</span>' : ""))+
+    "<br>Status: <b>"+STATUS[o.status]+"</b> · "+(left > 0 ? "time left: "+Math.floor(left/60)+" min" : "deadline passed")+"</div>";
+  return o;
+}
+$("btnOffer").onclick = e => run(e.target, loadOffer);
+$("btnBLock").onclick = e => run(e.target, async()=>{
+  need("A"); need("B"); const h = getHash();
+  const seller = $("bSeller").value.trim(), amt = $("bAmount").value, mins = Number($("bMins").value);
+  if (!ethers.isAddress(seller)) throw new Error("Enter the seller's wallet address (or press 'Check the seller's offer').");
+  if (!(Number(amt) > 0)) throw new Error("Enter a payment amount above 0.");
+  if (!(mins >= 2)) throw new Error("Deadline must be at least 2 minutes.");
+  const o = await getSwap("A", h);
+  if (o.status !== 1) throw new Error("The seller's asset is not locked and open for this Trade ID.");
+  const myExpiry = Math.floor(Date.now()/1000) + Math.round(mins*60);
+  if (myExpiry + 600 > o.expiry) throw new Error("Your deadline must end at least 10 minutes BEFORE the seller's deadline. Use a smaller number of minutes.");
+  const amount = ethers.parseUnits(amt,18);
+  const s = await signerFor("B");
+  await approveIfNeeded("B", s, amount);
+  await sendTx("B", settleC("B", s).lock(h, seller, cfg.B.token, amount, Math.round(mins*60)), "Payment locked. Now wait for the seller to collect it.");
+});
+$("btnBClaim").onclick = e => run(e.target, async()=>{
+  need("A"); need("B"); const h = getHash();
+  const pay = await getSwap("B", h);
+  if (pay.status === 1) throw new Error("The seller has not collected the payment yet, so the secret is not public. Try again soon.");
+  if (pay.status !== 2) throw new Error("There is no completed payment for this Trade ID on Network B.");
+  const a = await getSwap("A", h);
+  if (a.status !== 1) throw new Error("The asset is already "+STATUS[a.status].toLowerCase()+".");
+  const s = await signerFor("A");
+  await sendTx("A", settleC("A", s).claim(h, pay.secret), "Asset received! The trade is complete 🎉");
+});
+
+/* ---------- TRACK ---------- */
+async function track(){
+  need("A"); need("B"); const h = getHash();
+  const [a,b,sa,sb] = await Promise.all([getSwap("A",h), getSwap("B",h), tokenSym("A"), tokenSym("B")]);
+  const now = Math.floor(Date.now()/1000);
+  const card = (side,o,sym) => {
+    let st = STATUS[o.status], extra = "";
+    if (o.status === 1){
+      const left = o.expiry - now;
+      if (left > 0) extra = "<br>Time left: "+Math.floor(left/60)+" min";
+      else { st = "⏰ Expired"; extra = '<br><button class="small" data-refund="'+side+'" style="margin-top:6px">Refund to '+short(o.sender)+"</button>"; }
+    }
+    return '<div class="side"><h3>Network '+side+" · "+P(side).name+'</h3><div class="st">'+st+"</div>"+
+      (o.status ? fmt(o.amount)+" "+sym+"<br>"+short(o.sender)+" → "+short(o.receiver) : "Nothing locked yet")+extra+"</div>";
+  };
+  const done = [a.status>=1, b.status>=1, b.status===2, a.status===2];
+  const names = ["Seller locked the asset","Buyer locked the payment","Seller collected the payment","Buyer collected the asset"];
+  let banner;
+  if (a.status===2 && b.status===2) banner = '<div class="banner good">🎉 Settlement complete – delivery and payment both went through.</div>';
+  else if (a.status===3 || b.status===3) banner = '<div class="banner bad">This trade was cancelled and tokens were returned.</div>';
+  else if (a.status===0) banner = '<div class="banner wait">Waiting for the seller to lock the asset.</div>';
+  else if (b.status===0) banner = '<div class="banner wait">Waiting for the buyer to lock the payment.</div>';
+  else if (b.status===1) banner = '<div class="banner wait">Waiting for the seller to collect the payment.</div>';
+  else banner = '<div class="banner wait">Payment collected. Waiting for the buyer to receive the asset.</div>';
+  $("trackOut").innerHTML = '<ul class="steps">'+names.map((n,i)=>"<li>"+(done[i]?"✅":"⬜")+" "+n+"</li>").join("")+"</ul>"+banner+
+    '<div class="two" style="margin-top:12px">'+card("A",a,sa)+card("B",b,sb)+"</div>";
+  document.querySelectorAll("[data-refund]").forEach(btn => btn.onclick = ev => run(ev.target, async()=>{
+    const side = btn.dataset.refund; const s = await signerFor(side);
+    await sendTx(side, settleC(side, s).refund(h), "Refund sent."); track();
+  }));
+}
+$("btnTrack").onclick = e => run(e.target, track);
+$("btnMine").onclick = e => run(e.target, async()=>{
+  need("A"); need("B");
+  if (!account){ if(!window.ethereum) throw new Error("MetaMask not found."); const a = await window.ethereum.request({method:"eth_requestAccounts"}); account = ethers.getAddress(a[0]); updateWallet(); }
+  const [la,lb] = await Promise.all([settleC("A",readProv("A")).getUserSwaps(account), settleC("B",readProv("B")).getUserSwaps(account)]);
+  const all = [...new Set([...la,...lb])];
+  $("mine").innerHTML = all.length ? "<p class='hint'>Your trades – click one to track it:</p>"+all.map(h=>'<button class="small ghost mono" data-h="'+h+'">'+h.slice(0,10)+"…"+h.slice(-6)+"</button>").join("") : "<p class='hint'>No trades found for your wallet yet.</p>";
+  document.querySelectorAll("#mine [data-h]").forEach(b => b.onclick = () => { setHash(b.dataset.h); document.querySelectorAll(".hashInput").forEach(i=>i.value=b.dataset.h); run($("btnTrack"), track); });
+});
+setInterval(() => { if ($("tab-track").classList.contains("on") && /^0x[0-9a-fA-F]{64}$/.test(currentHash) && $("trackOut").innerHTML) track().catch(()=>{}); }, 15000);
+
+/* ---------- TOKENS ---------- */
+async function refreshBalances(){
+  if (!account) { $("balA").textContent = "Balance: connect wallet"; $("balB").textContent = "Balance: connect wallet"; return; }
+  for (const side of ["A","B"]){
+    try {
+      need(side);
+      const bal = await new ethers.Contract(cfg[side].token, TOKEN_ABI, readProv(side)).balanceOf(account);
+      $("bal"+side).innerHTML = "Balance: <b>"+Number(fmt(bal)).toLocaleString()+" "+(await tokenSym(side))+"</b>";
+    } catch { $("bal"+side).textContent = "Balance: finish Setup first"; }
+  }
+}
+async function mint(side){
+  need(side);
+  const s = await signerFor(side);
+  await sendTx(side, new ethers.Contract(cfg[side].token, TOKEN_ABI, s).mint(ethers.parseUnits("1000",18)), "1,000 test tokens added to your wallet.");
+  refreshBalances();
+}
+$("btnMintA").onclick = e => run(e.target, () => mint("A"));
+$("btnMintB").onclick = e => run(e.target, () => mint("B"));
+$("btnBal").onclick = e => run(e.target, refreshBalances);
+
+/* ---------- Start ---------- */
+fillNetworks();
+document.querySelectorAll(".hashInput").forEach(i => i.value = currentHash);
+if (!ethers.isAddress(cfg.A.settle)) showTab("setup");
+</script>
+</body>
+</html>
